@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Not-Baldi Demo</title>
+<style>
+  body { margin:0; overflow:hidden; background:#1e90ff; }
+  #label {
+    position:absolute; top:10px; left:10px;
+    color:white; font-family:"Comic Sans MS",cursive,sans-serif;
+    font-size:24px; line-height:1.4; user-select:none; pointer-events:none;
+  }
+</style>
+</head>
+<body>
+<div id="label">Melanie :)<br>Distance: 0</div>
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+// --- Scene ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1e90ff);
+
+// --- Camera ---
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 5000);
+
+// --- Renderer ---
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// --- Lighting ---
+const ambient = new THREE.AmbientLight(0xffffff,0.6);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffffff,0.8);
+dirLight.position.set(100,200,100);
+scene.add(dirLight);
+
+// --- Textures ---
+const loader = new THREE.TextureLoader();
+const floorTex = loader.load('f.png');
+floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+const wallTex = loader.load('w.png');
+wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
+const doorTex = loader.load('d.png');
+doorTex.wrapS = doorTex.wrapT = THREE.RepeatWrapping;
+const ceilTex = loader.load('c.png');
+ceilTex.wrapS = ceilTex.wrapT = THREE.RepeatWrapping;
+const melHappy = loader.load('melaniehappy.png');
+const melAngry = loader.load('melanieangry.png');
+
+// --- Materials ---
+const floorMat = new THREE.MeshStandardMaterial({map:floorTex});
+const wallMat = new THREE.MeshStandardMaterial({map:wallTex});
+const doorMat = new THREE.MeshStandardMaterial({map:doorTex});
+const ceilMat = new THREE.MeshStandardMaterial({map:ceilTex});
+
+// --- Tile Size & Scale ---
+const tileSize = 8; // shrink 512x512 tiles to 8 units
+const buildingMap = [
+  ['w','w','w','w','w'],
+  ['w','f','d','f','w'],
+  ['w','f','f','f','w'],
+  ['w','f','f','f','w'],
+  ['w','w','w','w','w'],
+];
+
+// --- Build Tiles ---
+const collidables = [];
+for(let z=0; z<buildingMap.length; z++){
+  for(let x=0; x<buildingMap[z].length; x++){
+    const type = buildingMap[z][x];
+    const xpos = (x-buildingMap[z].length/2)*tileSize;
+    const zpos = (z-buildingMap.length/2)*tileSize;
+
+    if(type==='f'){
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(tileSize,tileSize), floorMat);
+      floor.rotation.x = -Math.PI/2;
+      floor.position.set(xpos,0,zpos);
+      scene.add(floor);
+    }
+    if(type==='w' || type==='d'){
+      const mat = (type==='w')?wallMat:doorMat;
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(tileSize, tileSize, tileSize), mat);
+      wall.position.set(xpos, tileSize/2, zpos);
+      scene.add(wall);
+      collidables.push(wall);
+    }
+    if(type==='f'){ // ceiling over floors
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(tileSize,tileSize), ceilMat);
+      ceil.rotation.x = Math.PI/2;
+      ceil.position.set(xpos, tileSize, zpos);
+      scene.add(ceil);
+    }
+  }
+}
+
+// --- Player ---
+const player = new THREE.Object3D();
+player.position.set(-tileSize*1.5,1.8,-tileSize*1.5); // start near corner
+player.add(camera);
+camera.position.set(0,0,0);
+scene.add(player);
+
+// --- Input ---
+const keys = {};
+document.addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+// FPS mouse look
+let yaw = 0, pitch=0;
+document.body.addEventListener('click',()=>document.body.requestPointerLock());
+document.addEventListener('mousemove', e=>{
+  if(document.pointerLockElement===document.body){
+    yaw -= e.movementX*0.002;
+    pitch -= e.movementY*0.002;
+    pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+  }
+});
+
+// --- Melanie Cube (outside playable area) ---
+const melCubeGeo = new THREE.BoxGeometry(4,4,4);
+const melCubeMat = new THREE.MeshStandardMaterial({color:0xffffff});
+const melCube = new THREE.Mesh(melCubeGeo, melCubeMat);
+melCube.position.set(50,2,50); // outside building
+scene.add(melCube);
+
+// --- Melanie Face Sprite ---
+const melSpriteMat = new THREE.SpriteMaterial({map:melHappy});
+const melSprite = new THREE.Sprite(melSpriteMat);
+melSprite.scale.set(8,16,1);
+melSprite.position.set(0,2,0);
+melCube.add(melSprite);
+
+// --- Collision Detection ---
+function checkCollisions(pos){
+  const radius = 0.5;
+  for(const c of collidables){
+    const dx = Math.abs(pos.x - c.position.x);
+    const dz = Math.abs(pos.z - c.position.z);
+    if(dx<tileSize/2+radius && dz<tileSize/2+radius && Math.abs(pos.y - c.position.y)<tileSize/2+radius){
+      return true;
+    }
+  }
+  return false;
+}
+
+// --- Label ---
+const label = document.getElementById('label');
+const clock = new THREE.Clock();
+
+// --- Animate ---
+function animate(){
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+  
+  // Move player
+  const dir = new THREE.Vector3();
+  if(keys['w']) dir.z -=1;
+  if(keys['s']) dir.z +=1;
+  if(keys['a']) dir.x -=1;
+  if(keys['d']) dir.x +=1;
+  dir.normalize();
+  const forward = new THREE.Vector3(Math.sin(yaw),0,Math.cos(yaw));
+  const right = new THREE.Vector3(forward.z,0,-forward.x);
+  const move = new THREE.Vector3();
+  move.addScaledVector(forward,dir.z*delta*6);
+  move.addScaledVector(right,dir.x*delta*6);
+
+  // Collision check
+  const nextPos = player.position.clone().add(move);
+  if(!checkCollisions(nextPos)) player.position.copy(nextPos);
+
+  // Rotate camera
+  player.rotation.y = yaw;
+  camera.rotation.x = pitch;
+
+  // Melanie distance & face (even though she is outside)
+  const dist = player.position.distanceTo(melCube.position);
+  label.innerHTML = `Melanie :)<br>Distance: ${dist.toFixed(2)}`;
+  
+  renderer.render(scene,camera);
+}
+animate();
+
+window.addEventListener('resize',()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
